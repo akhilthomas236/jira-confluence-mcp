@@ -450,26 +450,47 @@ class JiraClient:
     async def get_agile_boards(self, project_key: Optional[str] = None) -> Dict[str, Any]:
         """Get all agile boards or boards for a specific project."""
         try:
-            # Use the agile API endpoint
+            # Use the agile API endpoint (modern Jira)
             params = {}
             if project_key:
                 params["projectKeyOrId"] = project_key
             
             # Try to get boards via agile API
-            boards = await self.get("agile/1.0/board", params=params)
-            return boards
+            session = await self.get_session()
+            url = f"{self.config.url}/rest/agile/1.0/board"
+            response = await session.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             logger.warning(f"Agile API not available, trying greenhopper: {e}")
             try:
                 # Fallback to greenhopper API (older Jira versions)
-                boards = await self.get("greenhopper/1.0/rapidview")
-                # Convert format to match agile API structure
+                session = await self.get_session()
+                url = f"{self.config.url}/rest/greenhopper/1.0/rapidviews/list"
+                response = await session.get(url)
+                response.raise_for_status()
+                boards_data = response.json()
+                
+                # Convert greenhopper format to match agile API structure
+                views = boards_data.get("views", [])
+                converted_boards = []
+                for view in views:
+                    converted_boards.append({
+                        "id": view.get("id"),
+                        "name": view.get("name"),
+                        "type": "scrum",  # Greenhopper boards are typically scrum
+                        "location": {
+                            "projectId": view.get("sprintSupportEnabled", False),
+                            "name": "Unknown Project"
+                        }
+                    })
+                
                 return {
-                    "maxResults": len(boards.get("views", [])),
+                    "maxResults": len(converted_boards),
                     "startAt": 0,
-                    "total": len(boards.get("views", [])),
+                    "total": len(converted_boards),
                     "isLast": True,
-                    "values": boards.get("views", [])
+                    "values": converted_boards
                 }
             except Exception as fallback_error:
                 logger.error(f"Failed to get boards with both APIs: {fallback_error}")
@@ -484,27 +505,78 @@ class JiraClient:
             state: Sprint state - 'active', 'closed', 'future', or 'all'
         """
         try:
+            # Try modern agile API first
             params = {}
             if state != "all":
                 params["state"] = state
             
-            sprints = await self.get(f"agile/1.0/board/{board_id}/sprint", params=params)
-            return sprints
+            session = await self.get_session()
+            url = f"{self.config.url}/rest/agile/1.0/board/{board_id}/sprint"
+            response = await session.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
-            logger.error(f"Failed to get sprints for board {board_id}: {e}")
-            return {"values": [], "total": 0}
+            logger.warning(f"Agile API sprints not available, trying greenhopper: {e}")
+            try:
+                # Fallback to greenhopper API for older Jira versions
+                session = await self.get_session()
+                
+                # Get sprints using greenhopper API
+                url = f"{self.config.url}/rest/greenhopper/1.0/sprintquery/{board_id}"
+                response = await session.get(url)
+                response.raise_for_status()
+                sprints_data = response.json()
+                
+                # Convert greenhopper format to agile API format
+                sprints = sprints_data.get("sprints", [])
+                filtered_sprints = []
+                
+                for sprint in sprints:
+                    sprint_state = sprint.get("state", "").lower()
+                    if state == "all" or sprint_state == state.lower():
+                        filtered_sprints.append({
+                            "id": sprint.get("id"),
+                            "name": sprint.get("name"),
+                            "state": sprint_state,
+                            "startDate": sprint.get("startDate"),
+                            "endDate": sprint.get("endDate"),
+                            "goal": sprint.get("goal", "")
+                        })
+                
+                return {
+                    "maxResults": len(filtered_sprints),
+                    "startAt": 0,
+                    "total": len(filtered_sprints),
+                    "isLast": True,
+                    "values": filtered_sprints
+                }
+            except Exception as fallback_error:
+                logger.error(f"Failed to get sprints for board {board_id} with both APIs: {fallback_error}")
+                return {"values": [], "total": 0}
     
     async def get_sprint_issues(self, sprint_id: str) -> Dict[str, Any]:
         """Get all issues in a specific sprint."""
         try:
-            issues = await self.get(f"agile/1.0/sprint/{sprint_id}/issue", params={
-                "fields": "summary,status,assignee,priority,issuetype,storypoints,timeoriginalestimate,timeestimate,timespent,parent",
+            # Try modern agile API first
+            session = await self.get_session()
+            url = f"{self.config.url}/rest/agile/1.0/sprint/{sprint_id}/issue"
+            params = {
+                "fields": "summary,status,assignee,priority,issuetype,customfield_10016,timeoriginalestimate,timeestimate,timespent,parent",
                 "expand": "changelog"
-            })
-            return issues
+            }
+            response = await session.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
-            logger.error(f"Failed to get issues for sprint {sprint_id}: {e}")
-            return {"issues": [], "total": 0}
+            logger.warning(f"Agile API sprint issues not available, trying JQL search: {e}")
+            try:
+                # Fallback to JQL search for sprint issues
+                jql = f"sprint = {sprint_id}"
+                fields = "summary,status,assignee,priority,issuetype,customfield_10016,timeoriginalestimate,timeestimate,timespent,parent"
+                return await self.search_issues(jql, max_results=1000)
+            except Exception as fallback_error:
+                logger.error(f"Failed to get issues for sprint {sprint_id} with both methods: {fallback_error}")
+                return {"issues": [], "total": 0}
     
     async def get_daily_standup_summary(self, board_id: str) -> Dict[str, Any]:
         """
