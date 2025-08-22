@@ -534,6 +534,25 @@ Upon launching, the Inspector will display a URL that you can access in your bro
 
 ## Changelog
 
+### Version 0.2.8 (2025-08-22)
+
+**Critical Bug Fix - Daily Standup Summary:**
+
+- **🐛 Fixed NoneType Error** - Resolved "NoneType object has no attribute 'get'" error in daily standup summary:
+  - **Enhanced null checking**: Added comprehensive null checks for all API responses (sprints, issues, nested objects)
+  - **Safe object access**: Implemented safe access patterns for nested objects (status, assignee, priority, issuetype)
+  - **Better error handling**: Added type checking for dictionaries and lists throughout the analysis
+  - **Improved debugging**: Added traceback logging for better error diagnosis
+  - **Robust data validation**: Validate sprint data, issue data, and all nested structures before processing
+  - **Graceful degradation**: Return meaningful error messages instead of crashing on invalid data
+
+**Technical Improvements:**
+
+- Added defensive programming patterns for all data access in daily standup analysis
+- Enhanced error messages with specific context about what data is missing or invalid
+- Improved logging with full traceback information for debugging
+- Better handling of edge cases (empty responses, malformed data, missing fields)
+
 ### Version 0.2.7 (2025-08-22)
 
 **Critical Agile API Fixes:**

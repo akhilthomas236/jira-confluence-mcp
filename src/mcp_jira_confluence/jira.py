@@ -588,6 +588,14 @@ class JiraClient:
             # Get active sprints for the board
             active_sprints = await self.get_board_sprints(board_id, "active")
             
+            # Add better null checking
+            if not active_sprints or not isinstance(active_sprints, dict):
+                return {
+                    "status": "error",
+                    "message": "Failed to retrieve sprints for board",
+                    "board_id": board_id
+                }
+            
             if not active_sprints.get("values"):
                 return {
                     "status": "no_active_sprint",
@@ -596,14 +604,41 @@ class JiraClient:
                 }
             
             active_sprint = active_sprints["values"][0]  # Get the first active sprint
-            sprint_id = active_sprint["id"]
-            sprint_name = active_sprint["name"]
+            
+            # Add null checks for sprint data
+            if not active_sprint or not isinstance(active_sprint, dict):
+                return {
+                    "status": "error",
+                    "message": "Invalid sprint data received",
+                    "board_id": board_id
+                }
+            
+            sprint_id = active_sprint.get("id")
+            sprint_name = active_sprint.get("name", "Unknown Sprint")
             sprint_start = active_sprint.get("startDate", "Unknown")
             sprint_end = active_sprint.get("endDate", "Unknown")
             
+            if not sprint_id:
+                return {
+                    "status": "error",
+                    "message": "Sprint ID not found in active sprint data",
+                    "board_id": board_id
+                }
+            
             # Get all issues in the sprint
-            sprint_issues = await self.get_sprint_issues(sprint_id)
+            sprint_issues = await self.get_sprint_issues(str(sprint_id))
+            
+            # Add null checks for issues data
+            if not sprint_issues or not isinstance(sprint_issues, dict):
+                return {
+                    "status": "error",
+                    "message": "Failed to retrieve sprint issues",
+                    "board_id": board_id
+                }
+            
             issues = sprint_issues.get("issues", [])
+            if not isinstance(issues, list):
+                issues = []
             
             # Analyze sprint progress
             status_breakdown = {}
@@ -615,13 +650,32 @@ class JiraClient:
             completed_today = []
             
             for issue in issues:
+                # Add null checks for each issue
+                if not issue or not isinstance(issue, dict):
+                    continue
+                    
                 fields = issue.get("fields", {})
+                if not fields or not isinstance(fields, dict):
+                    continue
+                    
                 key = issue.get("key", "")
                 summary = fields.get("summary", "")
-                status = fields.get("status", {}).get("name", "Unknown")
-                assignee = fields.get("assignee", {}).get("displayName", "Unassigned")
-                priority = fields.get("priority", {}).get("name", "Unknown")
-                issue_type = fields.get("issuetype", {}).get("name", "Unknown")
+                
+                # Safe access to nested status object
+                status_obj = fields.get("status")
+                status = status_obj.get("name", "Unknown") if status_obj else "Unknown"
+                
+                # Safe access to nested assignee object
+                assignee_obj = fields.get("assignee")
+                assignee = assignee_obj.get("displayName", "Unassigned") if assignee_obj else "Unassigned"
+                
+                # Safe access to nested priority object
+                priority_obj = fields.get("priority")
+                priority = priority_obj.get("name", "Unknown") if priority_obj else "Unknown"
+                
+                # Safe access to nested issue type object
+                issuetype_obj = fields.get("issuetype")
+                issue_type = issuetype_obj.get("name", "Unknown") if issuetype_obj else "Unknown"
                 
                 # Story points
                 story_points = fields.get("customfield_10016", 0) or fields.get("storypoints", 0) or 0
@@ -707,6 +761,8 @@ class JiraClient:
             
         except Exception as e:
             logger.error(f"Failed to generate daily standup summary: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "status": "error",
                 "message": f"Failed to generate daily standup summary: {str(e)}",
