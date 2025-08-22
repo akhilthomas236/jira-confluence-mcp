@@ -534,6 +534,26 @@ Upon launching, the Inspector will display a URL that you can access in your bro
 
 ## Changelog
 
+### Version 0.2.7 (2025-08-22)
+
+**Critical Agile API Fixes:**
+
+- **🔧 Fixed Jira Agile API Endpoints** - Resolved 404 errors with legacy Jira instances:
+  - **Corrected greenhopper URLs**: Fixed `/rest/api/2/greenhopper/1.0/rapidview` → `/rest/greenhopper/1.0/rapidviews/list`
+  - **Added sprint query endpoint**: Implemented `/rest/greenhopper/1.0/sprintquery/{board_id}` for legacy Jira
+  - **Enhanced API fallbacks**: Better error handling with graceful degradation from modern to legacy APIs
+  - **Direct session calls**: Improved control over HTTP requests for agile endpoints
+  - **JQL fallback**: Added JQL search fallback for sprint issues when agile API unavailable
+  - **Response normalization**: Convert legacy API responses to modern format for consistency
+
+**Technical Improvements:**
+
+- Fixed argument validation in server.py to allow empty parameters for some tools
+- Enhanced error messages with specific API endpoint information
+- Added comprehensive API documentation (AGILE_API_FIX.md)
+- Better compatibility with both Jira Cloud and Server instances
+- Improved debugging information for API endpoint issues
+
 ### Version 0.2.6 (2025-08-22)
 
 **Major Agile/Scrum Features:**
