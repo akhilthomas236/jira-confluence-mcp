@@ -628,14 +628,30 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="transition-jira-issue",
-            description="Transition a Jira issue to a new status",
+            description="Transition a Jira issue to a new status. You can use either the transition name (e.g., 'In Progress', 'Done') or transition ID.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "issue_key": {"type": "string"},
-                    "transition_id": {"type": "string"},
+                    "issue_key": {"type": "string", "description": "The Jira issue key (e.g., PROJ-123)"},
+                    "transition_name": {"type": "string", "description": "Name of the transition or target status (e.g., 'In Progress', 'Done', 'To Do')"},
+                    "transition_id": {"type": "string", "description": "ID of the transition (alternative to transition_name)"},
                 },
-                "required": ["issue_key", "transition_id"],
+                "required": ["issue_key"],
+                "anyOf": [
+                    {"required": ["transition_name"]},
+                    {"required": ["transition_id"]}
+                ]
+            },
+        ),
+        types.Tool(
+            name="get-jira-transitions",
+            description="Get available transitions for a Jira issue. Use this to see what status changes are possible.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_key": {"type": "string", "description": "The Jira issue key (e.g., PROJ-123)"},
+                },
+                "required": ["issue_key"],
             },
         ),
         types.Tool(
@@ -805,6 +821,82 @@ async def handle_list_tools() -> list[types.Tool]:
                 ]
             }
         ),
+        types.Tool(
+            name="get-agile-boards",
+            description="Get all agile boards or boards for a specific project. Essential for scrum masters to manage multiple boards.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_key": {
+                        "type": "string",
+                        "description": "Optional project key to filter boards for a specific project"
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get-board-sprints",
+            description="Get sprints for a specific agile board. View active, closed, or future sprints.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "board_id": {
+                        "type": "string",
+                        "description": "The ID of the agile board"
+                    },
+                    "state": {
+                        "type": "string",
+                        "enum": ["active", "closed", "future", "all"],
+                        "default": "active",
+                        "description": "Sprint state to filter by"
+                    }
+                },
+                "required": ["board_id"]
+            }
+        ),
+        types.Tool(
+            name="get-daily-standup-summary",
+            description="Get comprehensive daily standup summary for scrum masters. Provides sprint progress, team status, blockers, and key metrics for the active sprint.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "board_id": {
+                        "type": "string",
+                        "description": "The ID of the agile board to analyze"
+                    }
+                },
+                "required": ["board_id"]
+            }
+        ),
+        types.Tool(
+            name="get-task-assignment-recommendations",
+            description="Get AI-powered recommendations for who should be assigned to a task based on historical data, expertise, and current workload.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_key": {
+                        "type": "string",
+                        "description": "The Jira issue key to analyze for assignment recommendations"
+                    }
+                },
+                "required": ["issue_key"]
+            }
+        ),
+        types.Tool(
+            name="estimate-story-points",
+            description="Get AI-powered story point estimation based on issue complexity analysis and historical data from similar resolved issues.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_key": {
+                        "type": "string",
+                        "description": "The Jira issue key to estimate story points for"
+                    }
+                },
+                "required": ["issue_key"]
+            }
+        ),
     ]
 
 @server.call_tool()
@@ -814,8 +906,8 @@ async def handle_call_tool(
     """
     Handle tool execution requests for Jira and Confluence operations.
     """
-    if not arguments:
-        raise ValueError("Missing arguments")
+    if arguments is None:
+        arguments = {}
         
     try:
         # Jira operations
@@ -885,34 +977,131 @@ async def handle_call_tool(
             
         elif name == "transition-jira-issue":
             issue_key = arguments.get("issue_key")
+            transition_name = arguments.get("transition_name")
             transition_id = arguments.get("transition_id")
             
-            if not issue_key or not transition_id:
-                raise ValueError("Missing required arguments: issue_key and transition_id")
+            if not issue_key:
+                raise ValueError("Missing required argument: issue_key")
+            
+            if not transition_name and not transition_id:
+                raise ValueError("Either transition_name or transition_id must be provided")
+            
+            try:
+                if transition_name:
+                    # Use the new transition by name method
+                    result = await jira_client.transition_issue_by_name(issue_key, transition_name)
+                    new_status = result["new_status"]
+                    transition_executed = result["transition_executed"]
+                    
+                    response_text = f"✅ Successfully transitioned Jira issue {issue_key}\n"
+                    response_text += f"**Transition:** {transition_executed}\n"
+                    response_text += f"**New Status:** {new_status}"
+                    
+                else:
+                    # Use the original transition by ID method
+                    await jira_client.transition_issue(issue_key, transition_id)
+                    
+                    # Get the issue to see the new status
+                    issue = await jira_client.get_issue(issue_key)
+                    new_status = issue["fields"]["status"]["name"] if "status" in issue["fields"] else "Unknown"
+                    
+                    response_text = f"✅ Transitioned Jira issue {issue_key} to status: {new_status}"
                 
-            await jira_client.transition_issue(
-                issue_key=issue_key,
-                transition_id=transition_id
-            )
-            
-            # Get the issue to see the new status
-            issue = await jira_client.get_issue(issue_key)
-            new_status = issue["fields"]["status"]["name"] if "status" in issue["fields"] else "Unknown"
-            
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Transitioned Jira issue {issue_key} to status: {new_status}",
-                ),
-                types.EmbeddedResource(
-                    type="resource",
-                    resource=types.TextResourceContents(
-                        uri=AnyUrl(build_jira_uri(issue_key)),
-                        text=f"Transitioned Jira issue {issue_key} to status: {new_status}",
-                        mimeType="text/markdown"
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=response_text,
+                    ),
+                    types.EmbeddedResource(
+                        type="resource",
+                        resource=types.TextResourceContents(
+                            uri=AnyUrl(build_jira_uri(issue_key)),
+                            text=response_text,
+                            mimeType="text/markdown"
+                        )
                     )
-                )
-            ]
+                ]
+                
+            except ValueError as e:
+                # Handle transition not found errors with helpful suggestions
+                error_msg = str(e)
+                if "not found" in error_msg.lower():
+                    # Get available transitions to show in error
+                    try:
+                        transitions_data = await jira_client.get_transitions(issue_key)
+                        available = transitions_data.get("transitions", [])
+                        if available:
+                            trans_names = [t.get("name", "Unknown") for t in available]
+                            error_msg += f"\n\n**Available transitions:** {', '.join(trans_names)}"
+                    except:
+                        pass
+                
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ {error_msg}",
+                    )
+                ]
+                
+        elif name == "get-jira-transitions":
+            issue_key = arguments.get("issue_key")
+            
+            if not issue_key:
+                raise ValueError("Missing required argument: issue_key")
+            
+            try:
+                transitions_data = await jira_client.get_transitions(issue_key)
+                transitions = transitions_data.get("transitions", [])
+                
+                if not transitions:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=f"No transitions available for issue {issue_key}. The issue may be in a final state.",
+                        )
+                    ]
+                
+                # Format the response with available transitions
+                response_text = f"# Available Transitions for {issue_key}\n\n"
+                
+                for i, transition in enumerate(transitions, 1):
+                    trans_name = transition.get("name", "Unknown")
+                    trans_id = transition.get("id", "Unknown")
+                    to_status = transition.get("to", {}).get("name", "Unknown")
+                    description = transition.get("to", {}).get("description", "")
+                    
+                    response_text += f"**{i}. {trans_name}**\n"
+                    response_text += f"   - Target Status: {to_status}\n"
+                    response_text += f"   - Transition ID: {trans_id}\n"
+                    if description:
+                        response_text += f"   - Description: {description}\n"
+                    response_text += "\n"
+                
+                response_text += f"**Usage:** Use `transition-jira-issue` with `transition_name` parameter.\n"
+                response_text += f"**Example:** transition_name: \"{transitions[0].get('name', 'In Progress')}\""
+                
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=response_text,
+                    ),
+                    types.EmbeddedResource(
+                        type="resource",
+                        resource=types.TextResourceContents(
+                            uri=AnyUrl(build_jira_uri(issue_key)),
+                            text=response_text,
+                            mimeType="text/markdown"
+                        )
+                    )
+                ]
+                
+            except Exception as e:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ Error getting transitions for {issue_key}: {str(e)}",
+                    )
+                ]
         
         elif name == "get-jira-issue":
             issue_key = arguments.get("issue_key")
@@ -1620,6 +1809,389 @@ async def handle_call_tool(
                 types.TextContent(
                     type="text",
                     text=response,
+                )
+            ]
+        
+        # Agile/Scrum Tools
+        elif name == "get-agile-boards":
+            project_key = arguments.get("project_key")
+            
+            result = await jira_client.get_agile_boards(project_key)
+            boards = result.get("values", [])
+            
+            if not boards:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text="No agile boards found." + (f" for project {project_key}" if project_key else ""),
+                    )
+                ]
+            
+            response_text = f"**Found {len(boards)} agile board(s):**\n\n"
+            
+            for board in boards:
+                board_id = board.get("id", "Unknown")
+                board_name = board.get("name", "Unnamed Board")
+                board_type = board.get("type", "Unknown")
+                project_name = board.get("location", {}).get("name", "Unknown Project") if board.get("location") else "Unknown Project"
+                
+                response_text += f"**{board_name}** (ID: {board_id})\n"
+                response_text += f"  - Type: {board_type}\n"
+                response_text += f"  - Project: {project_name}\n\n"
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=response_text,
+                ),
+                types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=AnyUrl("jira://agile-boards"),
+                        text=response_text,
+                        mimeType="text/markdown"
+                    )
+                )
+            ]
+        
+        elif name == "get-board-sprints":
+            board_id = arguments.get("board_id")
+            state = arguments.get("state", "active")
+            
+            if not board_id:
+                raise ValueError("Missing required argument: board_id")
+            
+            result = await jira_client.get_board_sprints(board_id, state)
+            sprints = result.get("values", [])
+            
+            if not sprints:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"No {state} sprints found for board {board_id}.",
+                    )
+                ]
+            
+            response_text = f"**{state.title()} Sprints for Board {board_id}:**\n\n"
+            
+            for sprint in sprints:
+                sprint_id = sprint.get("id", "Unknown")
+                sprint_name = sprint.get("name", "Unnamed Sprint")
+                sprint_state = sprint.get("state", "Unknown")
+                start_date = sprint.get("startDate", "Not set")
+                end_date = sprint.get("endDate", "Not set")
+                goal = sprint.get("goal", "No goal set")
+                
+                # Format dates
+                if start_date != "Not set":
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                        start_date = dt.strftime("%Y-%m-%d")
+                    except:
+                        pass
+                
+                if end_date != "Not set":
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                        end_date = dt.strftime("%Y-%m-%d")
+                    except:
+                        pass
+                
+                response_text += f"**{sprint_name}** (ID: {sprint_id})\n"
+                response_text += f"  - State: {sprint_state}\n"
+                response_text += f"  - Start: {start_date}\n"
+                response_text += f"  - End: {end_date}\n"
+                if goal:
+                    response_text += f"  - Goal: {goal}\n"
+                response_text += "\n"
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=response_text,
+                ),
+                types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=AnyUrl(f"jira://board/{board_id}/sprints"),
+                        text=response_text,
+                        mimeType="text/markdown"
+                    )
+                )
+            ]
+        
+        elif name == "get-daily-standup-summary":
+            board_id = arguments.get("board_id")
+            
+            if not board_id:
+                raise ValueError("Missing required argument: board_id")
+            
+            summary = await jira_client.get_daily_standup_summary(board_id)
+            
+            if summary.get("status") == "no_active_sprint":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"No active sprint found for board {board_id}. Please check if there's an active sprint or try a different board.",
+                    )
+                ]
+            
+            if summary.get("status") == "error":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"Error generating daily standup summary: {summary.get('message', 'Unknown error')}",
+                    )
+                ]
+            
+            # Format the comprehensive summary
+            sprint = summary.get("sprint", {})
+            metrics = summary.get("metrics", {})
+            status_breakdown = summary.get("status_breakdown", {})
+            team_breakdown = summary.get("team_breakdown", {})
+            in_progress = summary.get("in_progress_tasks", [])
+            blockers = summary.get("potential_blockers", [])
+            
+            response_text = f"# Daily Standup Summary\n\n"
+            response_text += f"**Sprint:** {sprint.get('name', 'Unknown')}\n"
+            response_text += f"**Period:** {sprint.get('start_date', 'Unknown')} to {sprint.get('end_date', 'Unknown')}\n\n"
+            
+            # Sprint Progress
+            response_text += f"## 📊 Sprint Progress\n"
+            response_text += f"- **Issues:** {metrics.get('completed_issues', 0)}/{metrics.get('total_issues', 0)} ({metrics.get('issue_completion_percentage', 0)}% complete)\n"
+            response_text += f"- **Story Points:** {metrics.get('completed_story_points', 0)}/{metrics.get('total_story_points', 0)} ({metrics.get('story_point_completion_percentage', 0)}% complete)\n\n"
+            
+            # Status Breakdown
+            if status_breakdown:
+                response_text += f"## 📋 Status Breakdown\n"
+                for status, count in status_breakdown.items():
+                    response_text += f"- **{status}:** {count} issues\n"
+                response_text += "\n"
+            
+            # Team Status
+            if team_breakdown:
+                response_text += f"## 👥 Team Status\n"
+                for assignee, data in team_breakdown.items():
+                    if assignee == "Unassigned":
+                        continue
+                    response_text += f"**{assignee}:**\n"
+                    response_text += f"  - Total: {data['total']} | In Progress: {data['in_progress']} | Completed: {data['completed']} | To Do: {data['todo']}\n"
+                    
+                    # Show current issues
+                    if data['issues']:
+                        active_issues = [issue for issue in data['issues'] if issue['status'].lower() not in ['done', 'closed', 'resolved']]
+                        if active_issues:
+                            response_text += f"  - Active Issues: "
+                            issue_summaries = []
+                            for issue in active_issues[:3]:  # Show max 3 issues
+                                issue_summaries.append(f"{issue['key']} ({issue['status']})")
+                            response_text += ", ".join(issue_summaries)
+                            if len(active_issues) > 3:
+                                response_text += f" and {len(active_issues) - 3} more"
+                            response_text += "\n"
+                    response_text += "\n"
+            
+            # Potential Blockers
+            if blockers:
+                response_text += f"## 🚫 Potential Blockers ({len(blockers)})\n"
+                for blocker in blockers[:5]:  # Show top 5 blockers
+                    response_text += f"- **{blocker['key']}**: {blocker['summary'][:80]}{'...' if len(blocker['summary']) > 80 else ''}\n"
+                    response_text += f"  - Assignee: {blocker['assignee']} | Priority: {blocker['priority']} | Status: {blocker['status']}\n"
+                response_text += "\n"
+            
+            # Current In Progress Work
+            if in_progress:
+                response_text += f"## 🔄 Currently In Progress ({len(in_progress)})\n"
+                for task in in_progress[:10]:  # Show top 10 in progress
+                    response_text += f"- **{task['key']}**: {task['summary'][:60]}{'...' if len(task['summary']) > 60 else ''}\n"
+                    response_text += f"  - Assignee: {task['assignee']} | Priority: {task['priority']}\n"
+                response_text += "\n"
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=response_text,
+                ),
+                types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=AnyUrl(f"jira://board/{board_id}/daily-standup"),
+                        text=response_text,
+                        mimeType="text/markdown"
+                    )
+                )
+            ]
+        
+        elif name == "get-task-assignment-recommendations":
+            issue_key = arguments.get("issue_key")
+            
+            if not issue_key:
+                raise ValueError("Missing required argument: issue_key")
+            
+            recommendations = await jira_client.get_task_assignment_recommendations(issue_key)
+            
+            if recommendations.get("status") == "error":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"Error getting assignment recommendations: {recommendations.get('message', 'Unknown error')}",
+                    )
+                ]
+            
+            issue_summary = recommendations.get("issue_summary", "")
+            issue_type = recommendations.get("issue_type", "")
+            analysis_count = recommendations.get("analysis_based_on", 0)
+            recs = recommendations.get("recommendations", [])
+            
+            response_text = f"# Task Assignment Recommendations\n\n"
+            response_text += f"**Issue:** {issue_key} - {issue_summary}\n"
+            response_text += f"**Type:** {issue_type}\n"
+            response_text += f"**Analysis based on:** {analysis_count} similar resolved issues\n\n"
+            
+            if not recs:
+                response_text += "No assignment recommendations available. This might be due to:\n"
+                response_text += "- No similar issues found in project history\n"
+                response_text += "- No team members have worked on similar tasks\n"
+                response_text += "- Insufficient historical data\n\n"
+                response_text += "Consider assigning based on:\n"
+                response_text += "- Current workload distribution\n"
+                response_text += "- Team member expertise and interests\n"
+                response_text += "- Learning and development goals\n"
+            else:
+                response_text += "## 🎯 Recommended Assignees\n\n"
+                
+                for i, rec in enumerate(recs, 1):
+                    strength_emoji = "🟢" if rec["recommendation_strength"] == "High" else "🟡" if rec["recommendation_strength"] == "Medium" else "🔴"
+                    
+                    response_text += f"### {i}. {rec['assignee']} {strength_emoji}\n"
+                    response_text += f"**Score:** {rec['score']} | **Strength:** {rec['recommendation_strength']}\n"
+                    response_text += f"**Current Workload:** {rec['current_workload']} open issues\n"
+                    
+                    if rec['similar_issues_handled'] > 0:
+                        response_text += f"**Experience:** {rec['similar_issues_handled']} similar issues resolved\n"
+                        if rec['avg_resolution_time_hours'] != "N/A":
+                            response_text += f"**Avg Resolution Time:** {rec['avg_resolution_time_hours']} hours\n"
+                    
+                    if rec['reasons']:
+                        response_text += f"**Why recommended:**\n"
+                        for reason in rec['reasons']:
+                            response_text += f"  - {reason}\n"
+                    
+                    response_text += "\n"
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=response_text,
+                ),
+                types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=AnyUrl(build_jira_uri(issue_key)),
+                        text=response_text,
+                        mimeType="text/markdown"
+                    )
+                )
+            ]
+        
+        elif name == "estimate-story-points":
+            issue_key = arguments.get("issue_key")
+            
+            if not issue_key:
+                raise ValueError("Missing required argument: issue_key")
+            
+            estimation = await jira_client.estimate_story_points(issue_key)
+            
+            if estimation.get("status") == "error":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"Error estimating story points: {estimation.get('message', 'Unknown error')}",
+                    )
+                ]
+            
+            issue_summary = estimation.get("issue_summary", "")
+            issue_type = estimation.get("issue_type", "")
+            complexity = estimation.get("complexity_analysis", {})
+            historical = estimation.get("historical_analysis", {})
+            recommendation = estimation.get("recommendation", {})
+            similar_issues = estimation.get("similar_issues", [])
+            
+            response_text = f"# Story Point Estimation\n\n"
+            response_text += f"**Issue:** {issue_key} - {issue_summary}\n"
+            response_text += f"**Type:** {issue_type}\n\n"
+            
+            # Complexity Analysis
+            response_text += f"## 🧠 Complexity Analysis\n"
+            response_text += f"**Level:** {complexity.get('level', 'Unknown')} (Score: {complexity.get('score', 0)})\n"
+            
+            factors = complexity.get("factors", {})
+            if factors:
+                response_text += f"**Factors:**\n"
+                response_text += f"  - Description length: {factors.get('description_length', 0)} characters\n"
+                response_text += f"  - Components: {factors.get('component_count', 0)}\n"
+                response_text += f"  - Labels: {factors.get('label_count', 0)}\n"
+            response_text += "\n"
+            
+            # Historical Analysis
+            response_text += f"## 📊 Historical Analysis\n"
+            similar_count = historical.get("similar_issues_found", 0)
+            if similar_count > 0:
+                response_text += f"**Based on {similar_count} similar resolved issues:**\n"
+                response_text += f"  - Average points: {historical.get('average_points', 'N/A')}\n"
+                response_text += f"  - Median points: {historical.get('median_points', 'N/A')}\n"
+                response_text += f"  - Most common: {historical.get('most_common_points', 'N/A')}\n"
+                
+                distribution = historical.get("point_distribution", {})
+                if distribution:
+                    response_text += f"  - Distribution: "
+                    dist_items = [f"{points}pts({count})" for points, count in sorted(distribution.items())]
+                    response_text += ", ".join(dist_items)
+                    response_text += "\n"
+            else:
+                response_text += f"**No similar resolved issues found** - {historical.get('note', '')}\n"
+            response_text += "\n"
+            
+            # Recommendation
+            primary = recommendation.get("primary", "Unknown")
+            alternatives = recommendation.get("alternatives", [])
+            confidence = recommendation.get("confidence", "Unknown")
+            
+            confidence_emoji = "🟢" if confidence == "High" else "🟡" if confidence == "Medium" else "🔴"
+            
+            response_text += f"## 🎯 Recommendation {confidence_emoji}\n"
+            response_text += f"**Primary Estimate:** {primary} story points\n"
+            response_text += f"**Confidence:** {confidence}\n"
+            
+            if alternatives:
+                response_text += f"**Alternative estimates:** {', '.join(map(str, alternatives))} points\n"
+            
+            if recommendation.get("note"):
+                response_text += f"**Note:** {recommendation['note']}\n"
+            response_text += "\n"
+            
+            # Similar Issues Reference
+            if similar_issues:
+                response_text += f"## 📚 Most Similar Issues\n"
+                for issue in similar_issues[:3]:  # Show top 3
+                    response_text += f"- **{issue['issue_key']}** ({issue['story_points']} pts): {issue['summary']}\n"
+                    response_text += f"  - Similarity score: {issue['similarity_score']}\n"
+                response_text += "\n"
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=response_text,
+                ),
+                types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=AnyUrl(build_jira_uri(issue_key)),
+                        text=response_text,
+                        mimeType="text/markdown"
+                    )
                 )
             ]
         else:

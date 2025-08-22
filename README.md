@@ -13,6 +13,8 @@ A Model Context Protocol (MCP) server that integrates with Atlassian's Jira and 
   - **Get assigned issues** - Retrieve your assigned tickets ordered by priority and date
   - **Summarize issues** - Get comprehensive issue summaries with comments and history
   - **Extract Confluence and Git links** - Find all Confluence page references and Git repository URLs in issues
+  - **Agile/Scrum Support** - Board management, sprint tracking, daily standup summaries
+  - **AI-Powered Assistance** - Smart task assignment recommendations and story point estimation
 
 - **Confluence Integration**
   - List recent pages
@@ -144,11 +146,19 @@ The server exposes the following types of resources:
 #### Jira Tools
 - **`create-jira-issue`**: Create a new Jira issue
 - **`comment-jira-issue`**: Add a comment to an issue
-- **`transition-jira-issue`**: Change an issue's status
+- **`transition-jira-issue`**: Change an issue's status (supports transition names like "In Progress", "Done")
+- **`get-jira-transitions`**: Get available transitions for an issue
 - **`get-jira-issue`**: Get detailed information about a specific Jira issue
 - **`get-my-assigned-issues`**: Get issues assigned to you, ordered by priority and date
 - **`summarize-jira-issue`**: Get comprehensive issue summary with comments and history
 - **`extract-confluence-links`**: Find all Confluence and Git repository links in an issue
+
+#### Agile/Scrum Tools (NEW!)
+- **`get-agile-boards`**: Get all agile boards or filter by project - essential for scrum masters
+- **`get-board-sprints`**: Get sprints for a specific board (active, closed, future, or all)
+- **`get-daily-standup-summary`**: Comprehensive daily standup report with sprint progress, team status, and blockers
+- **`get-task-assignment-recommendations`**: AI-powered assignment suggestions based on historical data and expertise
+- **`estimate-story-points`**: AI-powered story point estimation using complexity analysis and historical patterns
 
 #### Confluence Tools
 - **`create-confluence-page`**: Create a new Confluence page
@@ -211,6 +221,42 @@ Parameters:
 Returns formatted markdown summary perfect for AI analysis.
 ```
 
+#### Transitioning Issue Status
+```
+Change an issue's status using human-readable transition names:
+
+Using transition name (recommended):
+- issue_key: "PROJ-123"
+- transition_name: "In Progress"  // or "Done", "To Do", etc.
+
+Using transition ID (advanced):
+- issue_key: "PROJ-123" 
+- transition_id: "21"
+
+The tool automatically:
+- Finds the correct transition ID from the name
+- Provides helpful error messages with available options
+- Shows the new status after transition
+
+Common transition names: "To Do", "In Progress", "Done", "Closed"
+```
+
+#### Getting Available Transitions
+```
+See what status changes are possible for an issue:
+
+Parameters:
+- issue_key: "PROJ-123" (required)
+
+Returns:
+- List of available transitions with names and target statuses
+- Transition IDs for advanced usage
+- Usage examples for each transition
+- Clear formatting for easy reading
+
+Use this before transitioning to see available options.
+```
+
 #### Extracting Links from Issues
 ```
 Find all Confluence and Git repository links in a Jira issue from:
@@ -233,6 +279,101 @@ Returns:
 - Git repository URLs with source location
 - Organized by category (Confluence vs Git)
 - Source information (description, comment, remote link)
+```
+
+#### Agile Board Management
+```
+Get all agile boards or filter by project:
+
+All boards:
+- No parameters needed
+
+Project-specific boards:
+- project_key: "PROJ" (optional filter)
+
+Returns:
+- Board ID, name, type (Scrum/Kanban)
+- Associated project information
+- Essential for scrum masters managing multiple teams
+```
+
+#### Sprint Management
+```
+Get sprints for a specific agile board:
+
+Active sprints only (default):
+- board_id: "123" (required)
+
+All sprint states:
+- board_id: "123"
+- state: "all" (options: "active", "closed", "future", "all")
+
+Returns:
+- Sprint ID, name, state, dates
+- Sprint goals and progress information
+- Perfect for sprint planning and retrospectives
+```
+
+#### Daily Standup Summary (Scrum Masters)
+```
+Get comprehensive daily standup report for active sprint:
+
+Parameters:
+- board_id: "123" (required - get from get-agile-boards)
+
+Returns detailed analysis:
+- Sprint progress (issues & story points completion %)
+- Status breakdown (To Do, In Progress, Done, etc.)
+- Team member workload and current tasks
+- Potential blockers (high priority unresolved issues)
+- In-progress tasks by assignee
+- Key metrics for standup discussion
+
+Perfect for scrum masters to quickly assess sprint health!
+```
+
+#### AI-Powered Task Assignment
+```
+Get smart recommendations for who should work on a task:
+
+Parameters:
+- issue_key: "PROJ-123" (required)
+
+AI analyzes:
+- Historical data from similar resolved issues
+- Team member expertise in components/labels
+- Current workload of potential assignees
+- Average resolution times for similar work
+- Component and technology experience
+
+Returns:
+- Ranked list of recommended assignees
+- Confidence scores and reasoning
+- Current workload information
+- Historical performance data
+```
+
+#### AI-Powered Story Point Estimation
+```
+Get intelligent story point estimates based on complexity and history:
+
+Parameters:
+- issue_key: "PROJ-123" (required)
+
+AI analyzes:
+- Issue complexity (description length, components, labels)
+- Historical data from similar resolved issues
+- Story point patterns in your project
+- Component and issue type complexity
+
+Returns:
+- Primary recommendation with confidence level
+- Alternative estimates for team discussion
+- Complexity analysis breakdown
+- Similar issues for reference
+- Historical patterns and distribution
+
+Perfect for sprint planning and effort estimation!
 ```
 
 #### Getting a Confluence Page
@@ -392,6 +533,62 @@ npx @modelcontextprotocol/inspector uv --directory /Users/annmariyajoshy/vibecod
 Upon launching, the Inspector will display a URL that you can access in your browser to begin debugging.
 
 ## Changelog
+
+### Version 0.2.6 (2025-08-22)
+
+**Major Agile/Scrum Features:**
+
+- **🏃‍♂️ Complete Agile/Scrum Toolset** - Full suite of tools for scrum masters and agile teams:
+  - **`get-agile-boards`** - Get all agile boards or filter by project with board types and project info
+  - **`get-board-sprints`** - Get sprints for any board (active, closed, future, or all) with goals and dates
+  - **`get-daily-standup-summary`** - Comprehensive daily standup reports for scrum masters with:
+    - Sprint progress metrics (issues & story points completion %)
+    - Team status breakdown with current workloads
+    - Potential blockers identification
+    - In-progress tasks by assignee
+  - **`get-task-assignment-recommendations`** - AI-powered assignment suggestions using:
+    - Historical data from similar resolved issues
+    - Team member expertise analysis
+    - Current workload considerations
+    - Component and technology experience
+  - **`estimate-story-points`** - AI-powered story point estimation using:
+    - Complexity analysis (description, components, labels)
+    - Historical patterns from similar issues
+    - Confidence scoring and alternatives
+    - Reference to most similar resolved issues
+
+**Technical Enhancements:**
+
+- Added comprehensive agile API support with fallback to greenhopper for older Jira versions
+- Implemented sophisticated AI analysis algorithms for assignment and estimation
+- Enhanced error handling for cases with no active sprints or insufficient data
+- Rich markdown formatting for all agile tool outputs
+- Embedded resource support for better MCP integration
+
+### Version 0.2.5 (2025-08-22)
+
+**Enhanced Jira Transitions:**
+
+- **Enhanced `transition-jira-issue`** - Now supports transition by name instead of cryptic IDs:
+  - **Human-readable transitions** - Use "In Progress", "Done", "To Do" instead of numeric IDs
+  - **Automatic ID resolution** - Finds the correct transition ID from user-friendly names
+  - **Smart matching** - Matches both transition names and target status names
+  - **Helpful error messages** - Shows available transitions when invalid names are used
+  - **Backwards compatibility** - Still supports transition_id parameter for advanced users
+
+- **New `get-jira-transitions` tool** - Discover available transitions for any issue:
+  - **Complete transition list** - Shows all possible status changes for an issue
+  - **Rich information** - Displays transition names, target statuses, and IDs
+  - **Usage guidance** - Provides examples for using each transition
+  - **User-friendly format** - Clear markdown formatting for easy reading
+
+**Technical Improvements:**
+
+- Added `transition_issue_by_name()` method with intelligent transition matching
+- Enhanced error handling with available transitions in error messages  
+- Case-insensitive transition name matching for better user experience
+- Updated tool schemas to support both name and ID parameters
+- Comprehensive validation and helpful error messages
 
 ### Version 0.2.4 (2025-07-27)
 
