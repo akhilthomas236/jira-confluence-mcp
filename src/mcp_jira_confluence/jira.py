@@ -79,12 +79,12 @@ class JiraClient:
 
     async def get_issue(self, issue_key: str) -> Dict[str, Any]:
         """Get an issue by its key."""
-        fields = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype"
+        fields = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype,project,components"
         return await self.get(f"issue/{issue_key}", params={"fields": fields})
     
     async def search_issues(self, jql: str, start: int = 0, max_results: int = 50) -> Dict[str, Any]:
         """Search for issues using JQL."""
-        fields = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype"
+        fields = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype,project,components"
         return await self.get("search", params={
             "jql": jql,
             "startAt": start,
@@ -793,13 +793,26 @@ class JiraClient:
             project_obj = fields.get("project")
             project_key = project_obj.get("key", "") if project_obj else ""
             
-            # Validate project key exists
+            # Validate project key exists - if not, try to extract from issue key
             if not project_key or not project_key.strip():
-                return {
-                    "status": "error",
-                    "message": "Project key not found or is empty for this issue",
-                    "issue_key": issue_key
-                }
+                # Try to extract project key from issue key (e.g., "PROJ-123" -> "PROJ")
+                if "-" in issue_key:
+                    potential_project_key = issue_key.split("-")[0]
+                    if potential_project_key:
+                        logger.warning(f"Project key missing from issue data, extracted '{potential_project_key}' from issue key")
+                        project_key = potential_project_key
+                    else:
+                        return {
+                            "status": "error",
+                            "message": f"Project key not found in issue data and could not extract from issue key: {issue_key}",
+                            "issue_key": issue_key
+                        }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Project key not found in issue data and issue key format invalid: {issue_key}",
+                        "issue_key": issue_key
+                    }
             
             # Find similar issues based on type, components, and keywords
             jql_parts = [f'project = "{project_key}"']
@@ -955,13 +968,26 @@ class JiraClient:
             project_obj = fields.get("project")
             project_key = project_obj.get("key", "") if project_obj else ""
             
-            # Validate project key exists
+            # Validate project key exists - if not, try to extract from issue key
             if not project_key or not project_key.strip():
-                return {
-                    "status": "error",
-                    "message": "Project key not found or is empty for this issue",
-                    "issue_key": issue_key
-                }
+                # Try to extract project key from issue key (e.g., "PROJ-123" -> "PROJ")
+                if "-" in issue_key:
+                    potential_project_key = issue_key.split("-")[0]
+                    if potential_project_key:
+                        logger.warning(f"Project key missing from issue data, extracted '{potential_project_key}' from issue key")
+                        project_key = potential_project_key
+                    else:
+                        return {
+                            "status": "error",
+                            "message": f"Project key not found in issue data and could not extract from issue key: {issue_key}",
+                            "issue_key": issue_key
+                        }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Project key not found in issue data and issue key format invalid: {issue_key}",
+                        "issue_key": issue_key
+                    }
             
             # Analyze complexity factors
             complexity_factors = {
