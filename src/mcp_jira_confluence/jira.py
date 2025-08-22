@@ -779,22 +779,38 @@ class JiraClient:
             # Get the issue details
             issue = await self.get_issue(issue_key)
             fields = issue.get("fields", {})
-            issue_type = fields.get("issuetype", {}).get("name", "")
+            
+            # Safe access to nested objects with null checks
+            issuetype_obj = fields.get("issuetype")
+            issue_type = issuetype_obj.get("name", "") if issuetype_obj else ""
+            
             summary = fields.get("summary", "")
             description = fields.get("description", "")
-            component_names = [comp.get("name", "") for comp in fields.get("components", [])]
-            labels = fields.get("labels", [])
-            project_key = fields.get("project", {}).get("key", "")
+            component_names = [comp.get("name", "") for comp in fields.get("components", []) if comp and comp.get("name")]
+            labels = fields.get("labels", []) or []
+            
+            # Safe access to project key with validation
+            project_obj = fields.get("project")
+            project_key = project_obj.get("key", "") if project_obj else ""
+            
+            # Validate project key exists
+            if not project_key or not project_key.strip():
+                return {
+                    "status": "error",
+                    "message": "Project key not found or is empty for this issue",
+                    "issue_key": issue_key
+                }
             
             # Find similar issues based on type, components, and keywords
             jql_parts = [f'project = "{project_key}"']
             
-            if issue_type:
+            if issue_type and issue_type.strip():
                 jql_parts.append(f'issuetype = "{issue_type}"')
             
             if component_names:
-                component_query = " OR ".join([f'component = "{comp}"' for comp in component_names])
-                jql_parts.append(f"({component_query})")
+                component_query = " OR ".join([f'component = "{comp}"' for comp in component_names if comp and comp.strip()])
+                if component_query:
+                    jql_parts.append(f"({component_query})")
             
             # Look for resolved/closed issues to analyze successful assignments
             jql_parts.append('status in ("Done", "Closed", "Resolved")')
@@ -804,7 +820,13 @@ class JiraClient:
             
             jql = " AND ".join(jql_parts) + " ORDER BY resolved DESC"
             
-            similar_issues = await self.search_issues(jql, max_results=50)
+            try:
+                similar_issues = await self.search_issues(jql, max_results=50)
+            except Exception as search_error:
+                logger.error(f"Failed to search for similar issues with JQL: {jql}")
+                logger.error(f"Search error: {search_error}")
+                # Fallback to empty results if search fails
+                similar_issues = {"issues": []}
             
             # Analyze assignments
             assignee_scores = {}
@@ -901,6 +923,8 @@ class JiraClient:
             
         except Exception as e:
             logger.error(f"Failed to get task assignment recommendations for {issue_key}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "status": "error",
                 "message": f"Failed to analyze task assignment: {str(e)}",
@@ -917,12 +941,27 @@ class JiraClient:
             # Get the issue details
             issue = await self.get_issue(issue_key)
             fields = issue.get("fields", {})
-            issue_type = fields.get("issuetype", {}).get("name", "")
+            
+            # Safe access to nested objects with null checks
+            issuetype_obj = fields.get("issuetype")
+            issue_type = issuetype_obj.get("name", "") if issuetype_obj else ""
+            
             summary = fields.get("summary", "")
             description = fields.get("description", "") or ""
-            component_names = [comp.get("name", "") for comp in fields.get("components", [])]
-            labels = fields.get("labels", [])
-            project_key = fields.get("project", {}).get("key", "")
+            component_names = [comp.get("name", "") for comp in fields.get("components", []) if comp and comp.get("name")]
+            labels = fields.get("labels", []) or []
+            
+            # Safe access to project key with validation
+            project_obj = fields.get("project")
+            project_key = project_obj.get("key", "") if project_obj else ""
+            
+            # Validate project key exists
+            if not project_key or not project_key.strip():
+                return {
+                    "status": "error",
+                    "message": "Project key not found or is empty for this issue",
+                    "issue_key": issue_key
+                }
             
             # Analyze complexity factors
             complexity_factors = {
@@ -955,35 +994,65 @@ class JiraClient:
             jql_parts = [
                 f'project = "{project_key}"',
                 'status in ("Done", "Closed", "Resolved")',
-                '"Story Points" is not EMPTY',
                 'resolved >= -52w'  # Last year
             ]
             
-            if issue_type:
+            # Add story points filter - try multiple common field names
+            story_point_filters = [
+                '"Story Points" is not EMPTY',
+                'customfield_10016 is not EMPTY',
+                '"Story Points[Number]" is not EMPTY'
+            ]
+            
+            # Use the first available story points filter
+            jql_parts.append(f"({' OR '.join(story_point_filters)})")
+            
+            if issue_type and issue_type.strip():
                 jql_parts.append(f'issuetype = "{issue_type}"')
             
             if component_names:
-                component_query = " OR ".join([f'component = "{comp}"' for comp in component_names])
-                jql_parts.append(f"({component_query})")
+                component_query = " OR ".join([f'component = "{comp}"' for comp in component_names if comp and comp.strip()])
+                if component_query:
+                    jql_parts.append(f"({component_query})")
             
             jql = " AND ".join(jql_parts) + " ORDER BY resolved DESC"
             
-            similar_issues = await self.search_issues(jql, max_results=100)
+            try:
+                similar_issues = await self.search_issues(jql, max_results=100)
+            except Exception as search_error:
+                logger.error(f"Failed to search for similar issues with JQL: {jql}")
+                logger.error(f"Search error: {search_error}")
+                # Fallback to basic complexity estimation if search fails
+                similar_issues = {"issues": []}
             
             # Analyze story points from similar issues
             story_point_data = []
-            story_point_field_names = ["customfield_10016", "storypoints", "Story Points"]
+            story_point_field_names = [
+                "customfield_10016",  # Most common story points field
+                "customfield_10004",  # Alternative story points field
+                "customfield_10002",  # Another alternative
+                "storypoints", 
+                "Story Points",
+                "customfield_10011",  # Another common one
+                "customfield_10008"   # Yet another alternative
+            ]
             
             for similar_issue in similar_issues.get("issues", []):
                 similar_fields = similar_issue.get("fields", {})
+                if not similar_fields:
+                    continue
+                    
                 similar_summary = similar_fields.get("summary", "")
                 similar_description = similar_fields.get("description", "") or ""
                 
-                # Try to find story points field
+                # Try to find story points field - check all possible field names
                 story_points = None
+                found_field = None
                 for field_name in story_point_field_names:
-                    story_points = similar_fields.get(field_name)
-                    if story_points is not None:
+                    field_value = similar_fields.get(field_name)
+                    if field_value is not None and isinstance(field_value, (int, float)) and field_value > 0:
+                        story_points = field_value
+                        found_field = field_name
                         break
                 
                 if story_points and isinstance(story_points, (int, float)) and story_points > 0:
@@ -1114,6 +1183,8 @@ class JiraClient:
             
         except Exception as e:
             logger.error(f"Failed to estimate story points for {issue_key}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "status": "error",
                 "message": f"Failed to estimate story points: {str(e)}",
